@@ -19,6 +19,4 @@ Dự án này nhằm phân tích và dự báo doanh số của một nhà hàng
 **7. Nguồn gốc thanh toán**: Phân tích các nguồn gốc thanh toán để hiểu rõ hơn về các dòng doanh thu.
 
 ## Xây dựng mô hình dự báo
-Ngoài ra, dự án còn sử dụng mô hình SARIMA để dự báo doanh số trong 15 ngày tiếp theo, giúp nhà hàng chuẩn bị tốt hơn cho các chiến lược vận hành và tiếp thị trong tương lai. 
-
-Dự án này được xây dựng với R và công cụ phân tích dữ liệu Excel.
+Ngoài ra, dự án còn sử dụng mô hình SARIMA để dự báo doanh số trong 15 ngày tiếp theo, giúp nhà hàng chuẩn bị tốt hơn cho các chiến lược vận hành và tiếp thị trong tương lai.
