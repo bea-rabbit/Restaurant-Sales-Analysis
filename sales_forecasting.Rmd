@@ -1,0 +1,237 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(error = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+## Thư viện
+
+```{r}
+library(zoo)
+library(astsa)
+library(ggplot2)
+library(tseries)
+library(lubridate)
+```
+
+## Đọc dữ liệu
+
+Bộ dữ liệu về doanh số bán hàng theo ngày (USD - Gross Sales) của một nhà hàng ở Úc, từ 26/06/2023 đến 30/12/2023, gồm 169 giá trị quan sát.
+
+```{r sales_data}
+sales_data <- read.csv('daily_sales.csv', header = TRUE)
+head(sales_data)
+```
+
+## Tiền xử lý dữ liệu
+
+### Định dạng lại dữ liệu ngày
+
+```{r}
+dates_standard <- dmy(paste(sales_data$Date, "2023"))
+sales_data$Date <- as.Date(dates_standard, format = "%d-%b-%Y")
+summary(sales_data)
+```
+
+### Xử lý giá trị trùng
+
+Xóa các dòng dữ liệu bị trùng lặp dựa trên dữ liệu cột Date. Số lượng phần tử trong danh sách duplicate bằng 0. Cho thấy, dữ liệu cột Date không có giá trị trùng lặp.
+
+```{r}
+duplicate <- sales_data[duplicated(sales_data$Date)]
+length(duplicate)
+```
+
+### Xử lý giá trị ngoại lai
+
+#### Sử dụng Interquartile Range (IQR)
+
+```{r}
+boxplot(sales_data$Sales, 
+        main="Doanh số bán hàng theo ngày", ylab="Doanh số", col="lightblue")
+outliers <- boxplot.stats(sales_data$Sales)$out
+outlier_dates <- sales_data[sales_data$Sales %in% outliers, ]
+print(outlier_dates)
+```
+
+#### Sử dụng Z-Score
+
+Vẽ biểu đồ histogram và Q-Q Plot cho dữ liệu cột Sales. Từ 2 biểu đồ, dữ liệu có xu hướng lệch phải nhẹ, nhưng phần trung tâm khá gần chuẩn.
+
+```{r}
+hist(sales_data$Sales, main = "Histogram of Sales", 
+     xlab = "Sales", ylab = "Frequency", col = "lightblue")
+
+qqnorm(sales_data$Sales, col="lightblue", lwd=1.5);
+qqline(sales_data$Sales, col="red", lwd=2)
+```
+
+```{r}
+mean_value <- mean(sales_data$Sales, na.rm = TRUE)
+sd_value <- sd(sales_data$Sales, na.rm = TRUE)
+z_scores <- (sales_data$Sales - mean_value) / sd_value
+threshold <- 3
+outliers <- sales_data[abs(z_scores) > threshold, ]
+print(outliers)
+```
+
+Sau khi áp dụng Z-Score và IQR, phát hiện 2 giá trị ngoại lai vào ngày 13/10/2023 và 25/12/2023. Do đây là các ngày lễ với doanh số tăng đột biến, chúng không được coi là ngoại lai và sẽ được giữ lại trong mô hình.
+
+### Xử lý giá trị bị khuyết
+
+#### Xử lý giá trị rỗng trong cột Date
+
+```{r}
+all_dates <- seq.Date(min(sales_data$Date), max(sales_data$Date), by = "day")
+missing_dates <- as.Date(setdiff(all_dates, sales_data$Date))
+cat("The length of missing dates: ", length(missing_dates))
+```
+
+Dữ liệu có 19 ngày bị khuyết do nhà hàng không hoạt động vào các ngày thứ 7 và chủ nhật trong các tháng 6, 7, 9, và 10. Tạo một bộ dữ liệu mới bao gồm đầy đủ các ngày từ 26/06/2023 đến 30/12/2023, đảm bảo tính liên tục theo thời gian.
+
+```{r}
+full_date_df <- data.frame(Date = all_dates)
+full_date_df <- merge(full_date_df, sales_data, by = "Date", all.x = TRUE)
+```
+
+#### Xử lý giá trị rỗng trong cột Sales
+
+Áp dụng phương pháp nội suy tuyến tính để điền các giá trị bị khuyết trong khoảng thời gian xác định.
+
+```{r}
+full_date_df$Sales <- na.approx(full_date_df$Sales, x=full_date_df$Date, na.rm = FALSE)
+```
+
+## Mô hình hóa dữ liệu
+
+### Tạo time series object
+
+```{r}
+start_date <- min(full_date_df$Date)
+ts_data <- ts(full_date_df$Sales, 
+              start = c(year(start_date), as.numeric(format(as.Date(start_date), "%j"))),
+              frequency = 365)
+
+plot(ts_data, main="Doanh số theo ngày", 
+     xlab="Thời gian", ylab="Doanh số", col='dodgerblue', lwd=2)
+```
+
+Biểu đồ cho thấy phương sai tương đối ổn định và không có xu hướng rõ rệt, nhưng dữ liệu thể hiện yếu tố mùa vụ theo tuần (ts_data $\approx$ ts_data - 7). Do đó, thực hiện phép lấy sai phân bậc D=7 để xử lý yếu tố mùa vụ trong dữ liệu time series.
+
+### Thực hiện các phép biến đổi
+
+```{r}
+acf2(ts_data, 40)
+d_data <- diff(ts_data, 7)
+```
+
+```{r}
+plot(d_data, col='dodgerblue', lwd=2)
+adf.test(d_data)
+```
+
+Dựa trên đồ thị và kết quả kiểm định Dickey-Fuller, dữ liệu đã đạt tính dừng. Do đó, có thể tiến hành xây dựng mô hình dự báo.
+
+### Ước lượng các tham số cần thiết
+
+```{r}
+acf2(d_data, 50)
+```
+
+**Nhận xét**:
+
+-   **Thành phần theo mùa (Seasonal Component)**: Hàm ACF cắt ngắn (cuts off) tại lag = 1s (với chu kỳ mùa s = 7), trong khi hàm PACF giảm dần (tails off) tại các độ trễ lag = 1s, 2s, 3s, .... Những đặc điểm này gợi ý sử dụng mô hình $\mathbf{SMA}{(1)}$ với các tham số mùa: P = 0, Q = 1, s = 7.
+
+-   **Thành phần phi mùa (Non-seasonal Component)**: Hàm ACF giảm dần nhưng không cắt ngắn rõ ràng, trong khi hàm PACF cắt ngắn tại lag = 1. Tuy nhiên, biểu đồ không quá rõ ràng, nên cũng có thể nhận định rằng cả ACF và PACF đều giảm dần tại lag = 1. Điều này gợi ý hai mô hình khả thi là $\mathbf{AR}{(1)}$ và $\mathbf{ARMA}{(1, 1)}$.
+
+**Kết luận**: Dựa vào phân tích trên, chúng ta sẽ thử nghiệm hai mô hình sau
+
+1.  $\mathbf{ARIMA}{(1,0,0)} \times {(0,1,1)}_{7}$
+
+2.  $\mathbf{ARIMA}{(1,0,1)} \times {(0,1,1)}_{7}$
+
+### 1. Mô hình $\mathbf{ARIMA}{(1,0,0)} \times {(0,1,1)}_{7}$
+
+```{r}
+sarima(ts_data, 1, 0, 0, 0, 1, 1, 7)
+```
+
+### 2. Mô hình $\mathbf{ARIMA}{(1,0,1)} \times {(0,1,1)}_{7}$
+
+```{r}
+sarima(ts_data, 1, 0, 1, 0, 1, 1, 7)
+```
+
+#### Nhận xét cho cả 2 mô hình
+
+-   **Residuals (Phần dư chuẩn hóa)**: Biểu đồ "Standardized Residuals" cho thấy phần dư dao động xung quanh giá trị trung bình bằng 0. Điều này cho thấy mô hình đã loại bỏ được phần lớn cấu trúc trong dữ liệu.
+
+-   **ACF của phần dư**: không có giá trị nào vượt qua ngưỡng ý nghĩa thống kê (đường xanh). Điều này cho thấy phần dư không còn hiện tượng tự tương quan, nghĩa là mô hình đã nắm bắt được cấu trúc của dữ liệu.
+
+-   **Biểu đồ Q-Q**: cho thấy phần dư gần như nằm trên đường thẳng, điều này chứng tỏ phần dư tuân theo phân phối chuẩn.
+
+-   **Ljung-Box Test**: Biểu đồ p-value cho Ljung-Box test kiểm tra phần dư có tự tương quan hay không. Với hầu hết các giá trị p-value lớn hơn 0.05, ta không bác bỏ giả thuyết $H_0$ (phần dư là nhiễu trắng). Điều này cho thấy mô hình phù hợp.
+
+**Kết luận**: Như vậy cả 2 mô hình đều phù hợp với dữ liệu.
+
+### Lựa chọn mô hình
+
+Chúng ta sẽ so sánh 2 mô hình dựa trên các tiêu chuẩn AIC, AICc và BIC.
+
+-   Mô hình **ARIMA(1,0,0) × (0,1,1)₇**
+
+    ```         
+    AIC = 15.84218  AICc = 15.84293  BIC = 15.91286
+    ```
+
+-   Mô hình **ARIMA(1,0,1) × (0,1,1)₇**
+
+    ```         
+    AIC = 15.84722  AICc = 15.84847  BIC = 15.93557
+    ```
+
+**Nhận xét**: Mô hình ARIMA(1,0,0) × (0,1,1)₇ có giá trị AIC, AICc, và BIC thấp hơn so với mô hình ARIMA(1,0,1) × (0,1,1)₇. Vì vậy, mô hình **ARIMA(1,0,0) × (0,1,1)₇** là mô hình **tốt nhất** trong hai mô hình.
+
+### Dự báo
+
+Áp dụng mô hình ARIMA(1,0,0) × (0,1,1)₇ tính giá trị dự báo cho 15 ngày tiếp theo. Đồng thời xây dựng khoảng tin cậy 95% cho các giá trị dự báo này với:$$t_Y = \frac{\hat{Y_t}-Y_t}{SE(\hat{Y_t})}$$ tuân theo phân phối Student, trong đó:
+
+-   $\widehat{Y_t}$ là giá trị dự báo
+
+-   $SE(\widehat{Y_t})$ là sai số chuẩn của dự báo
+
+-   $Y_t$ là giá trị được dự báo
+
+Từ đó có được khoảng tin cậy: $$\widehat{Y_t} - t_{\alpha}^{n-2}\times SE(\widehat{Y_t}) \leq Y_t \leq \widehat{Y_t} + t_{\alpha}^{n-2}\times SE(\widehat{Y_t})$$
+
+```{r}
+fit <- sarima.for(ts_data, 1, 0, 0, 0, 1, 1, 7, n.ahead=15)
+
+# Xây dựng khoảng tin cậy 95% cho giá trị dự báo
+z <- qt(1 - 0.05/2, 188-2)
+
+ts.plot(ts_data, fit$pred, type = "l", lwd = 2, 
+        col = c("dodgerblue","red3"),
+        xlim = c(2023.5,2024.05), ylim = c(70,7000),
+        main = "Dự báo doanh số cho 15 ngày tiếp theo", 
+        xlab = "Thời gian", ylab = "Doanh số")
+
+#points(ts_data, col ="dodgerblue")
+#points(fit$pred, col = "red3")
+U = fit$pred + z * fit$se; L = fit$pred - z * fit$se
+xx = c(time(U), rev(time(U))); yy = c(L, rev(U))
+polygon (xx, yy, border = 8, col = gray(.6,alpha =.5))
+lines(fit$pred , type="p", col=2)
+legend("topleft", 
+       legend = c("Dữ liệu gốc", "Dự báo", "Khoảng tin cậy 95%"),
+       col = c("dodgerblue", "red3", "gray60"),
+       pch=c(1,1,NA), lwd = c(2, 2, 10))
+```
+
+**Nhận xét**:
+
+-   Xu hướng dao động của giá trị dự báo tương đồng với dữ liệu gốc, điều này cho thấy mô hình đã nắm bắt được phần nào tính chất của dữ liệu. Tuy nhiên, giá trị dữ báo có biện độ dao động nhỏ hơn so với dữ liệu gốc. Điều này cho thấy mô hình có xu hướng "làm mịn" dữ liệu và chưa phản ánh được đầy đủ các biến động lớn (đỉnh và đáy) trong doanh số thực tế.
+
+-   Khoảng tin cậy mở rộng dần khi dự báo xa hơn, điều này phù hợp với lý thuyết khi độ bất định tăng theo thời gian. Phần lớn các giá trị dự báo nằm trong khoảng tin cậy, cho thấy mô hình dự báo có độ tin cậy khá cao.
+
+**Kết luận**: Mô hình đã nắm bắt được chu kỳ ngắn hạn và xu hướng biến động của dữ liệu, đưa ra dự báo hợp lý trong ngắn hạn. Tuy nhiên, mô hình chưa nắm bắt tốt các đỉnh và đáy trong dữ liệu gốc, điều này có thể làm giảm độ chính xác nếu dữ liệu thực tế tiếp tục dao động mạnh.
