@@ -1,6 +1,6 @@
 # Phân tích Doanh số Nhà Hàng và Dự Báo Doanh Số với Mô Hình SARIMA
 
-Dự án này nhằm phân tích và dự báo doanh số của một nhà hàng ở Úc trong vòng 6 tháng cuối năm 2023, tập trung vào việc hiểu rõ động lực doanh số, hiệu suất sản phẩm và hành vi khách hàng. Mục tiêu chính của dự án là đưa ra những chiến lược bán hàng, cải thiện danh mục sản phẩm và đưa ra quyết định vận hành hiệu quả hơn.
+Dự án này nhằm phân tích và dự báo doanh số của một nhà hàng ở Úc trong vòng 6 tháng cuối năm 2023, tập trung vào việc hiểu rõ xu hướng doanh số, hiệu suất sản phẩm và hành vi khách hàng. Mục tiêu chính của dự án là đưa ra những chiến lược bán hàng, cải thiện danh mục sản phẩm và đưa ra quyết định vận hành hiệu quả hơn.
 
 ## Các nhiệm vụ chính của dự án bao gồm:
 
